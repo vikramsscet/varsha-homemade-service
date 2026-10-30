@@ -14,6 +14,10 @@ if (process.env.JWT_SECRET.length < 32) {
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 
+if (!process.env.PRODUCT_SERVICE_PROVIDER && nodeEnv !== 'test') {
+  throw new Error("PRODUCT_SERVICE_PROVIDER must be set explicitly ('http' or 'mock')");
+}
+
 module.exports = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === 'production',
@@ -46,9 +50,9 @@ module.exports = Object.freeze({
   },
   productService: {
     // 'mock' = built-in sample catalog (development/test only), 'http' = Product CMS over HTTP.
-    provider: process.env.PRODUCT_SERVICE_PROVIDER || (nodeEnv === 'production' ? 'http' : 'mock'),
+    provider: process.env.PRODUCT_SERVICE_PROVIDER || 'mock',
     baseUrl: (process.env.PRODUCT_SERVICE_URL || '').replace(/\/+$/, ''),
-    timeoutMs: parseInt(process.env.PRODUCT_SERVICE_TIMEOUT_MS, 10) || 3000,
+    timeoutMs: parseInt(process.env.PRODUCT_SERVICE_TIMEOUT_MS, 10) || 8000,
   },
   enableDocs: process.env.NODE_ENV !== 'production' || process.env.ENABLE_DOCS === 'true',
 });

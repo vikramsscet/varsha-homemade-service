@@ -102,11 +102,12 @@ To get a test ID token: https://developers.google.com/oauthplayground → gear i
 
 ### Product CMS
 `src/integrations/product` exposes `productServiceClient.getProduct(productId)` → `{ productId, productName, productSlug, unitPrice } | null`.
-- `PRODUCT_SERVICE_PROVIDER=mock` (default outside production): built-in catalog
+- `PRODUCT_SERVICE_PROVIDER` is **required** (no default; startup fails if unset, except `NODE_ENV=test`).
+- `PRODUCT_SERVICE_PROVIDER=mock` (dev/test only): built-in catalog
   - `11111111-1111-4111-8111-111111111111` Mango Pickle, 249.00
   - `22222222-2222-4222-8222-222222222222` Besan Laddu, 599.50
   - `33333333-3333-4333-8333-333333333333` Masala Chakli, 149.99
-- `PRODUCT_SERVICE_PROVIDER=http` + `PRODUCT_SERVICE_URL`: calls `GET {url}/products/:id` (**assumed contract** - adjust `httpProductServiceClient.js` to the real CMS). Mock is refused in production.
+- `PRODUCT_SERVICE_PROVIDER=http` + `PRODUCT_SERVICE_URL`: calls `GET {url}/api/v1/products/:id` and maps `id/title/slug/price` to the cart contract. Products that are not `PUBLISHED` or have `isAvailable: false` give `404 PRODUCT_NOT_FOUND`; non-INR products give `422 PRODUCT_CURRENCY_UNSUPPORTED`. Mock is refused in production.
 
 ### Cart cURL
 ```bash
