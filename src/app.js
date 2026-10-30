@@ -19,18 +19,27 @@ app.set('trust proxy', /^\d+$/.test(env.trustProxy) ? parseInt(env.trustProxy, 1
 
 app.use(requestLogger);
 app.use(helmet());
+
+
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 app.use(
-  cors((req, cb) => {
-    const origin = req.get('origin');
-    // Allow non-browser clients (no Origin header), whitelisted origins, and same-origin
-    // requests (e.g. Swagger UI served by this app).
-    const sameOrigin = origin === `${req.protocol}://${req.get('host')}`;
-    const allowed = !origin || sameOrigin || env.corsOrigins.includes(origin);
-    cb(allowed ? null : new Error('Origin not allowed by CORS'), {
+  cors((req, callback) => {
+    const origin = req.get("Origin");
+    const sameOrigin = origin === `${req.protocol}://${req.get("host")}`;
+    const allowed = !origin || sameOrigin || allowedOrigins.includes(origin);
+    callback(allowed ? null : new Error("Origin not allowed by CORS"), {
       origin: allowed,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Anonymous-Cart-ID'],
-      exposedHeaders: ['X-Request-Id', 'X-Anonymous-Cart-ID'],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Request-Id",
+        "X-Anonymous-Cart-ID",
+      ],
+      exposedHeaders: ["X-Request-Id", "X-Anonymous-Cart-ID"],
     });
   })
 );
