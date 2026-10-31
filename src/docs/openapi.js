@@ -19,6 +19,40 @@ const cartErrors = {
   409: errorResponse('Cart is not ACTIVE'),
 };
 
+const addressAuth = [{ bearerAuth: [] }];
+const addressIdParam = { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } };
+const addressOk = (description) => ({
+  description,
+  content: { 'application/json': { schema: { $ref: '#/components/schemas/AddressResponse' } } },
+});
+const addressExample = {
+  firstName: 'Vikram', lastName: 'Rao', phone: '+918319510666', country: 'India',
+  addressLine1: 'Beverly Hills Society', addressLine2: 'Building A, Flat 101',
+  city: 'Pune', state: 'Maharashtra', postalCode: '411057', isDefault: true,
+};
+const addressBody = (ref) => ({
+  required: true,
+  content: { 'application/json': { schema: { $ref: ref }, example: addressExample } },
+});
+const addressRules =
+  ' Validation: firstName/lastName/city/state max 100, addressLine1/2 max 255, phone 6-20 chars (digits, optional leading +, spaces, ().-), postalCode 2-20 alphanumeric/space/hyphen, country = name or ISO alpha-2 code. Errors: INVALID_REQUEST (400, `details[]` lists fields), UNAUTHORIZED (401), ADDRESS_NOT_FOUND (404), INVALID_ADDRESS (400), ADDRESS_LIMIT_REACHED (409).';
+const addressErrors = {
+  400: errorResponse('Invalid request'),
+  401: errorResponse('Missing or invalid token'),
+  404: errorResponse('ADDRESS_NOT_FOUND (missing or not owned by the caller)'),
+};
+
+const guestAuth = [{ guestCheckoutSession: [] }];
+const guestOk = (description) => ({
+  description,
+  content: { 'application/json': { schema: { $ref: '#/components/schemas/GuestCheckoutResponse' } } },
+});
+const guestRules =
+  ' Errors: INVALID_GUEST_SESSION (missing/malformed token), GUEST_SESSION_NOT_FOUND (unknown or deleted), GUEST_SESSION_EXPIRED (all 401); INVALID_REQUEST (400); INVALID_CHECKOUT_DETAILS (400).';
+const guestErrors = {
+  401: errorResponse('INVALID_GUEST_SESSION, GUEST_SESSION_NOT_FOUND or GUEST_SESSION_EXPIRED'),
+};
+
 module.exports = {
   openapi: '3.0.3',
   info: {
@@ -27,7 +61,7 @@ module.exports = {
     description: 'User, authentication and cart API for varsha-homemade.com',
   },
   servers: [{ url: 'http://localhost:3001' }],
-  tags: [{ name: 'Auth' }, { name: 'Cart' }, { name: 'Cart Items' }, { name: 'Health' }],
+  tags: [{ name: 'Auth' }, { name: 'Addresses' }, { name: 'Guest Checkout' }, { name: 'Cart' }, { name: 'Cart Items' }, { name: 'Health' }],
   paths: {
     '/api/v1/auth/google': {
       post: {
@@ -70,6 +104,129 @@ module.exports = {
           401: errorResponse('Missing or invalid token'),
           404: errorResponse('User not found'),
         },
+      },
+    },
+    '/api/v1/addresses': {
+      get: {
+        tags: ['Addresses'],
+        summary: 'List the caller\'s addresses (default first, then most recently updated)',
+        security: addressAuth,
+        responses: {
+          200: {
+            description: 'Addresses (empty list if none)',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/AddressListResponse' } } },
+          },
+          401: addressErrors[401],
+        },
+      },
+      post: {
+        tags: ['Addresses'],
+        summary: 'Create an address (the first address becomes the default)',
+        description: 'Requires a Bearer JWT; the owner is always the token subject.' + addressRules,
+        security: addressAuth,
+        requestBody: addressBody('#/components/schemas/AddressInput'),
+        responses: {
+          201: addressOk('Created'),
+          400: addressErrors[400],
+          401: addressErrors[401],
+          409: errorResponse('ADDRESS_LIMIT_REACHED (20 per user)'),
+        },
+      },
+    },
+    '/api/v1/addresses/{id}': {
+      get: {
+        tags: ['Addresses'],
+        summary: 'Get one address',
+        security: addressAuth,
+        parameters: [addressIdParam],
+        responses: { 200: addressOk('Address'), ...addressErrors },
+      },
+      put: {
+        tags: ['Addresses'],
+        summary: 'Replace an address (isDefault optional; the default cannot be unset directly)',
+        description: 'Full replacement of editable fields. Sending isDefault=false for the current default returns INVALID_ADDRESS.' + addressRules,
+        security: addressAuth,
+        parameters: [addressIdParam],
+        requestBody: addressBody('#/components/schemas/AddressInput'),
+        responses: { 200: addressOk('Updated'), ...addressErrors },
+      },
+      delete: {
+        tags: ['Addresses'],
+        summary: 'Delete an address (promotes another to default if the default was deleted)',
+        security: addressAuth,
+        parameters: [addressIdParam],
+        responses: { 200: { description: 'Deleted' }, ...addressErrors },
+      },
+    },
+    '/api/v1/addresses/{id}/default': {
+      patch: {
+        tags: ['Addresses'],
+        summary: 'Set an address as the default',
+        description: 'Unsets the previous default atomically. No request body.',
+        security: addressAuth,
+        parameters: [addressIdParam],
+        responses: { 200: addressOk('Updated address'), ...addressErrors },
+      },
+    },
+    '/api/v1/guest-checkout/sessions': {
+      post: {
+        tags: ['Guest Checkout'],
+        summary: 'Create a guest checkout session',
+        description:
+          'Rate limited per IP. Always creates a new session. `sessionToken` is returned once and only its SHA-256 hash is stored. `anonymousCartId` (optional) is the anonymous cart id the client holds; it is only used to link the session to that ACTIVE cart and is never accepted as a credential.',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { anonymousCartId: { type: 'string', format: 'uuid' } },
+              },
+            },
+          },
+        },
+        responses: {
+          201: guestOk('Created (includes sessionToken, shown once)'),
+          400: errorResponse('Invalid request'),
+          404: errorResponse('CART_NOT_FOUND'),
+          429: errorResponse('Rate limited'),
+        },
+      },
+    },
+    '/api/v1/guest-checkout/sessions/current': {
+      get: {
+        tags: ['Guest Checkout'],
+        summary: 'Get the current guest checkout session',
+        description: 'Authenticated only by the X-Guest-Checkout-Session header (not by JWT or cart id).' + guestRules,
+        security: guestAuth,
+        responses: { 200: guestOk('Session'), 401: guestErrors[401] },
+      },
+      put: {
+        tags: ['Guest Checkout'],
+        summary: 'Save customer and/or delivery details (partial updates supported)',
+        description: 'Only the provided fields change. Ownership and expiry cannot be modified (unknown fields are ignored). Rules: email valid, max 320; names/city/state max 100; addressLine max 255; phone and postalCode as for addresses; country = name or ISO alpha-2 code.' + guestRules,
+        security: guestAuth,
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/GuestCheckoutDetails' },
+              example: {
+                customer: { email: 'customer@example.com', firstName: 'Vikram', lastName: 'Rao', phone: '+918319510666' },
+                deliveryAddress: {
+                  country: 'India', addressLine1: 'Beverly Hills Society', addressLine2: 'Building A, Flat 101',
+                  city: 'Pune', state: 'Maharashtra', postalCode: '411057',
+                },
+              },
+            },
+          },
+        },
+        responses: { 200: guestOk('Updated session'), 400: errorResponse('Invalid request'), 401: guestErrors[401] },
+      },
+      delete: {
+        tags: ['Guest Checkout'],
+        summary: 'Delete the session (the cart is not deleted)',
+        security: guestAuth,
+        responses: { 200: { description: 'Deleted' }, 401: guestErrors[401] },
       },
     },
     '/api/v1/carts': {
@@ -201,6 +358,12 @@ module.exports = {
     securitySchemes: {
       bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
       anonymousCartId: { type: 'apiKey', in: 'header', name: 'X-Anonymous-Cart-ID' },
+      guestCheckoutSession: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-Guest-Checkout-Session',
+        description: 'Token returned once by POST /api/v1/guest-checkout/sessions. Independent of bearerAuth and of the anonymous cart id.',
+      },
     },
     parameters: {
       AnonymousCartId: {
@@ -212,6 +375,103 @@ module.exports = {
       },
     },
     schemas: {
+      GuestCheckoutDetails: {
+        type: 'object',
+        properties: {
+          customer: {
+            type: 'object',
+            properties: {
+              email: { type: 'string', format: 'email', example: 'customer@example.com' },
+              firstName: { type: 'string', example: 'Vikram' },
+              lastName: { type: 'string', example: 'Rao' },
+              phone: { type: 'string', example: '+918319510666' },
+            },
+          },
+          deliveryAddress: {
+            type: 'object',
+            properties: {
+              country: { type: 'string', description: 'Country name or ISO alpha-2 code', example: 'India' },
+              addressLine1: { type: 'string' },
+              addressLine2: { type: 'string', nullable: true },
+              city: { type: 'string' },
+              state: { type: 'string' },
+              postalCode: { type: 'string', example: '411057' },
+            },
+          },
+        },
+      },
+      GuestCheckoutResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          data: {
+            allOf: [
+              { $ref: '#/components/schemas/GuestCheckoutDetails' },
+              {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  sessionToken: { type: 'string', description: 'Only in the create response' },
+                  cartId: { type: 'string', format: 'uuid', nullable: true },
+                  isComplete: { type: 'boolean' },
+                  expiresAt: { type: 'string', format: 'date-time' },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  updatedAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            ],
+          },
+          message: { type: 'string' },
+        },
+      },
+      AddressInput: {
+        type: 'object',
+        required: ['firstName', 'lastName', 'phone', 'country', 'addressLine1', 'city', 'state', 'postalCode'],
+        properties: {
+          firstName: { type: 'string', example: 'Vikram' },
+          lastName: { type: 'string', example: 'Rao' },
+          phone: { type: 'string', example: '+918319510666' },
+          country: { type: 'string', description: 'Country name or ISO 3166-1 alpha-2 code', example: 'India' },
+          addressLine1: { type: 'string', example: 'Beverly Hills Society' },
+          addressLine2: { type: 'string', nullable: true, example: 'Building A, Flat 101' },
+          city: { type: 'string', example: 'Pune' },
+          state: { type: 'string', example: 'Maharashtra' },
+          postalCode: { type: 'string', example: '411057' },
+          isDefault: { type: 'boolean', example: true },
+        },
+      },
+      Address: {
+        allOf: [
+          { $ref: '#/components/schemas/AddressInput' },
+          {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              country: { type: 'string', description: 'ISO alpha-2 code', example: 'IN' },
+              countryName: { type: 'string', example: 'India' },
+              isDefault: { type: 'boolean' },
+              createdAt: { type: 'string', format: 'date-time' },
+              updatedAt: { type: 'string', format: 'date-time' },
+            },
+          },
+        ],
+      },
+      AddressResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          data: { $ref: '#/components/schemas/Address' },
+          message: { type: 'string', example: 'Success' },
+        },
+      },
+      AddressListResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          data: { type: 'array', items: { $ref: '#/components/schemas/Address' } },
+          message: { type: 'string', example: 'Success' },
+        },
+      },
       CartItem: {
         type: 'object',
         properties: {

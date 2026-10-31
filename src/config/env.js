@@ -48,6 +48,13 @@ module.exports = Object.freeze({
     maxItemQuantity: parseInt(process.env.CART_MAX_ITEM_QUANTITY, 10) || 99,
     maxDistinctItems: parseInt(process.env.CART_MAX_DISTINCT_ITEMS, 10) || 50,
   },
+  guestCheckout: {
+    sessionTtlHours: parseInt(process.env.GUEST_CHECKOUT_SESSION_TTL_HOURS, 10) || 24,
+    // 0 disables the in-process cleanup job (e.g. if an external cron runs it instead).
+    cleanupIntervalMinutes: Number.isNaN(parseInt(process.env.GUEST_CHECKOUT_CLEANUP_INTERVAL_MINUTES, 10))
+      ? 60
+      : parseInt(process.env.GUEST_CHECKOUT_CLEANUP_INTERVAL_MINUTES, 10),
+  },
   productService: {
     // 'mock' = built-in sample catalog (development/test only), 'http' = Product CMS over HTTP.
     provider: process.env.PRODUCT_SERVICE_PROVIDER || 'mock',

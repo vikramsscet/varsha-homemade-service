@@ -38,6 +38,7 @@ app.use(
         "Authorization",
         "X-Request-Id",
         "X-Anonymous-Cart-ID",
+        "X-Guest-Checkout-Session",
       ],
       exposedHeaders: ["X-Request-Id", "X-Anonymous-Cart-ID"],
     });
