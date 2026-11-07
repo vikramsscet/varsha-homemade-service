@@ -344,6 +344,27 @@ module.exports = {
       },
     },
     '/api/v1/orders': {
+      get: {
+        tags: ['Orders'],
+        summary: 'List the signed-in customer\'s orders, newest first (cursor pagination)',
+        description:
+          'Bearer JWT only; the customer is taken from the token (a userId in the query is ignored). Guest orders are never included. Each item carries the order-level payment: the successful payment when there is one, otherwise the latest attempt, with a friendly `paymentMethodSummary` built from the persisted payment (e.g. `Visa •••• 4242`, `UPI`, `HDFC netbanking`); `paymentStatus` / `paymentMethodSummary` are null for an order that has no payment attempt yet.\n\nPagination is keyset-based on (createdAt, id): pass `pagination.nextCursor` back as `cursor` until `hasMore` is false. New orders created between requests never cause duplicates or gaps in later pages. A cursor is only valid with the same `status` filter it was issued for.\n\nErrors: INVALID_REQUEST (400: bad limit, status or cursor), UNAUTHORIZED (401), INTERNAL_ERROR (500).',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 50, default: 10 } },
+          { name: 'cursor', in: 'query', required: false, schema: { type: 'string' }, description: 'Opaque value from `pagination.nextCursor`.' },
+          {
+            name: 'status', in: 'query', required: false,
+            schema: { type: 'string', enum: ['PENDING_PAYMENT', 'PAYMENT_FAILED', 'PAID', 'CANCELLED', 'EXPIRED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
+          },
+        ],
+        responses: {
+          200: { description: 'Orders retrieved successfully', content: { 'application/json': { schema: { $ref: '#/components/schemas/OrderHistoryResponse' } } } },
+          400: errorResponse('INVALID_REQUEST'),
+          401: errorResponse('UNAUTHORIZED'),
+          500: errorResponse('INTERNAL_ERROR'),
+        },
+      },
       post: {
         tags: ['Orders'],
         summary: 'Create an internal order from the caller\'s active cart',
@@ -375,6 +396,23 @@ module.exports = {
           422: errorResponse('Empty cart or incomplete checkout details'),
           429: errorResponse('RATE_LIMITED'),
           502: errorResponse('Product service unavailable'),
+        },
+      },
+    },
+    '/api/v1/orders/{id}': {
+      get: {
+        tags: ['Orders'],
+        summary: 'Get one of the signed-in customer\'s orders (historical snapshot)',
+        description:
+          'Returns the order exactly as it was placed: pricing, item snapshots, the shipping address snapshot and **every** payment attempt (newest first) with the instrument metadata that Razorpay reported. Nothing is read from the current product catalogue or the customer\'s saved addresses. Item images are not part of the order snapshot and are not returned.\n\nPayment `amount` is in minor units (paise), like `POST /payments/create-order`; order pricing fields are in rupees. `card`, `bankCode`, `walletName` and `upiHandleMasked` are only populated for the matching `paymentMethod`; full card numbers, full UPI handles and provider token references are never stored or returned.\n\nBearer JWT only. An order that does not exist, belongs to another customer or is a guest order returns the same 404 ORDER_NOT_FOUND.\n\nErrors: INVALID_REQUEST (400), UNAUTHORIZED (401), ORDER_NOT_FOUND (404), INTERNAL_ERROR (500).',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          200: { description: 'Order retrieved successfully', content: { 'application/json': { schema: { $ref: '#/components/schemas/OrderDetailResponse' } } } },
+          400: errorResponse('INVALID_REQUEST (malformed id)'),
+          401: errorResponse('UNAUTHORIZED'),
+          404: errorResponse('ORDER_NOT_FOUND (missing, not yours, or a guest order)'),
+          500: errorResponse('INTERNAL_ERROR'),
         },
       },
     },
@@ -574,6 +612,117 @@ module.exports = {
           success: { type: 'boolean', example: true },
           data: { $ref: '#/components/schemas/Order' },
           message: { type: 'string', example: 'Order created' },
+        },
+      },
+      OrderHistoryItem: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          orderNumber: { type: 'string', example: 'VH261107-100001' },
+          status: { type: 'string', example: 'PAID' },
+          currency: { type: 'string', example: 'INR' },
+          subtotal: { type: 'number', example: 1097.5 },
+          discountAmount: { type: 'number', example: 0 },
+          taxAmount: { type: 'number', example: 0 },
+          shippingAmount: { type: 'number', example: 0 },
+          totalAmount: { type: 'number', example: 1097.5 },
+          paymentStatus: { type: 'string', nullable: true, example: 'CAPTURED' },
+          paymentMethodSummary: { type: 'string', nullable: true, example: 'Visa •••• 4242' },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      OrderHistoryResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          data: {
+            type: 'object',
+            properties: {
+              items: { type: 'array', items: { $ref: '#/components/schemas/OrderHistoryItem' } },
+              pagination: {
+                type: 'object',
+                properties: {
+                  nextCursor: { type: 'string', nullable: true, description: 'Opaque; null on the last page.' },
+                  hasMore: { type: 'boolean' },
+                },
+              },
+            },
+          },
+          message: { type: 'string', example: 'Orders retrieved successfully' },
+        },
+      },
+      OrderPaymentAttempt: {
+        type: 'object',
+        properties: {
+          paymentId: { type: 'string', format: 'uuid' },
+          razorpayPaymentId: { type: 'string', nullable: true, example: 'pay_Q1w2e3r4t5y6' },
+          paymentStatus: { type: 'string', example: 'CAPTURED' },
+          paymentMethod: { type: 'string', nullable: true, example: 'card' },
+          paymentMethodSummary: { type: 'string', nullable: true, example: 'Visa •••• 4242' },
+          amount: { type: 'integer', description: 'Minor units (paise)', example: 109750 },
+          currency: { type: 'string', example: 'INR' },
+          card: {
+            type: 'object', nullable: true, description: 'Only for card payments.',
+            properties: {
+              network: { type: 'string', nullable: true, example: 'Visa' },
+              last4: { type: 'string', nullable: true, example: '4242' },
+              type: { type: 'string', nullable: true, example: 'credit' },
+              issuer: { type: 'string', nullable: true, example: 'HDFC' },
+            },
+          },
+          bankCode: { type: 'string', nullable: true, description: 'Netbanking only', example: 'HDFC' },
+          walletName: { type: 'string', nullable: true, description: 'Wallet only', example: 'PAYTM' },
+          upiHandleMasked: { type: 'string', nullable: true, description: 'UPI only; the full handle is never stored', example: 'al***@okhdfc' },
+          createdAt: { type: 'string', format: 'date-time' },
+          capturedAt: { type: 'string', format: 'date-time', nullable: true },
+        },
+      },
+      OrderDetailResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          data: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              orderNumber: { type: 'string', example: 'VH261107-100001' },
+              status: { type: 'string', example: 'PAID' },
+              currency: { type: 'string', example: 'INR' },
+              subtotal: { type: 'number' },
+              discountAmount: { type: 'number' },
+              taxAmount: { type: 'number' },
+              shippingAmount: { type: 'number' },
+              totalAmount: { type: 'number', example: 1097.5 },
+              paymentStatus: { type: 'string', nullable: true },
+              paymentMethodSummary: { type: 'string', nullable: true },
+              items: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    productId: { type: 'string', format: 'uuid' },
+                    productName: { type: 'string' },
+                    productSlug: { type: 'string' },
+                    unitPrice: { type: 'number' },
+                    quantity: { type: 'integer' },
+                    totalPrice: { type: 'number' },
+                  },
+                },
+              },
+              shippingAddress: {
+                type: 'object',
+                properties: {
+                  firstName: { type: 'string' }, lastName: { type: 'string' }, phone: { type: 'string' },
+                  country: { type: 'string' }, addressLine1: { type: 'string' }, addressLine2: { type: 'string', nullable: true },
+                  city: { type: 'string' }, state: { type: 'string' }, postalCode: { type: 'string' },
+                },
+              },
+              payments: { type: 'array', description: 'All attempts, newest first', items: { $ref: '#/components/schemas/OrderPaymentAttempt' } },
+              paidAt: { type: 'string', format: 'date-time', nullable: true },
+              createdAt: { type: 'string', format: 'date-time' },
+            },
+          },
+          message: { type: 'string', example: 'Order retrieved successfully' },
         },
       },
       PaymentOrderResponse: {

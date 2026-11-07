@@ -81,7 +81,7 @@ test('order creation and Razorpay order API (database)', opts, async (t) => {
   const addItem = (cartId, productId, quantity, price = '1.00') =>
     db.query(
       `INSERT INTO cart_items (cart_id, product_id, product_name, product_slug, unit_price, quantity, total_price)
-       VALUES ($1,$2,'n','s',$3,$4,$3 * $4)`, [cartId, productId, price, quantity]);
+       VALUES ($1,$2,'n','s',$3,$4,$3::numeric * $4::int)`, [cartId, productId, price, quantity]);
   const count = async (sql, params) => (await db.query(sql, params)).rows[0].n;
 
   await t.test('authenticated: server-calculated total, snapshots, cart untouched, amount ignored', async () => {

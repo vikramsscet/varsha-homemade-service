@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { AppError } = require('../../utils/errors');
+const { extractInstrument } = require('../../modules/payments/payments.instrument');
 
 const KEY_ID_PATTERN = /^rzp_(test|live)_[A-Za-z0-9]+$/;
 
@@ -84,6 +85,7 @@ class RazorpayClient {
       amount: body.amount,
       currency: body.currency,
       method: body.method || null,
+      instrument: extractInstrument(body), // display-only; card number/CVV/full VPA are never read
       captured: body.captured === true,
       errorCode: body.error_code || null,
       errorDescription: body.error_description || null,

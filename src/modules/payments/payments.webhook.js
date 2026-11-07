@@ -8,6 +8,7 @@ const orderRepository = require('../orders/orders.repository');
 const { applyGatewayPayment } = require('./payments.settlement');
 const { toMinor } = require('../orders/orders.pricing');
 const razorpay = require('../../integrations/razorpay');
+const { extractInstrument } = require('./payments.instrument');
 const { AppError } = require('../../utils/errors');
 
 // Event -> the payment status that the event announces.
@@ -25,7 +26,9 @@ const log = (level, message, fields) =>
 
 // Removes customer PII / instrument details before the payload is stored (audit needs ids, status, amounts).
 const PII_KEYS = new Set(['email', 'contact', 'card', 'card_id', 'vpa', 'wallet', 'bank', 'upi', 'acquirer_data',
-  'customer_id', 'token_id', 'billing_address', 'international']);
+  'customer_id', 'token_id', 'billing_address', 'international',
+  // defence in depth: Razorpay never sends these to merchants, but if one ever appeared it must not be stored
+  'cvv', 'cvc', 'pin', 'otp', 'number', 'card_number', 'authentication', 'password']);
 const redact = (v) => {
   if (Array.isArray(v)) return v.map(redact);
   if (v && typeof v === 'object') {
@@ -41,6 +44,7 @@ const normalize = (type, entity) => ({
   amount: entity.amount,
   currency: entity.currency,
   method: entity.method || null,
+  instrument: extractInstrument(entity), // read before redact(); only the stored payload is stripped
   captured: EVENT_STATUS[type] === 'captured',
   errorCode: entity.error_code || null,
   errorDescription: entity.error_description || null,

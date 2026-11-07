@@ -255,6 +255,7 @@ const createOrder = async (identity, input = {}, idempotencyKey) => {
         (await repository.findOpenByCart(ctx.cart.id));
       if (winner) return replay(winner);
     }
+    console.log(err);
     throw err;
   }
 };

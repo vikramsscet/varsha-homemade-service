@@ -66,8 +66,8 @@ test('payment webhook API (database)', opts, async (t) => {
     return { status: res.status, json: await res.json() };
   };
   let n = 0;
-  const hook = async (type, c, { payId, eventId = `evt_${suffix}_${++n}`, status, amount, signature } = {}) => {
-    const entity = { id: payId, order_id: c.pay.razorpayOrderId, amount: amount ?? c.pay.amount, currency: 'INR', method: 'upi', status, email: 'pii@x.test' };
+  const hook = async (type, c, { payId, eventId = `evt_${suffix}_${++n}`, status, amount, signature, extra = {} } = {}) => {
+    const entity = { id: payId, order_id: c.pay.razorpayOrderId, amount: amount ?? c.pay.amount, currency: 'INR', method: 'upi', status, email: 'pii@x.test', ...extra };
     const body = { event: type, payload: { payment: { entity }, ...(type === 'order.paid' ? { order: { entity: { id: c.pay.razorpayOrderId, status: 'paid' } } } : {}) } };
     const raw = JSON.stringify(body);
     const res = await fetch(`${base}/payments/webhook`, {
@@ -163,5 +163,98 @@ test('payment webhook API (database)', opts, async (t) => {
     assert.equal(r.json.data.status, 'IGNORED');
     assert.equal((await one('SELECT status FROM orders WHERE id=$1', [c.order.id])).status, 'PENDING_PAYMENT');
     assert.equal((await one('SELECT last_error FROM payment_webhook_events WHERE gateway_event_id=$1', [r.eventId])).last_error, 'PAYMENT_MISMATCH');
+  });
+
+  await t.test('instrument metadata (migration 010): stored for card, never erased by a thinner replay, replaced on a different method', async () => {
+    const c = await checkout('instr');
+    const card = { method: 'card', card: { network: 'Visa', last4: '4242', type: 'credit', issuer: 'HDFC', number: '4111111111111111', cvv: '123' } };
+    // a failed UPI attempt first, then a successful card payment inside the same Razorpay order
+    await hook('payment.failed', c, { payId: 'pay_i1', status: 'failed', extra: { method: 'upi', vpa: 'alice@okhdfc', error_code: 'X', error_description: 'x' } });
+    let p = await one('SELECT * FROM payments WHERE id=$1', [c.pay.paymentId]);
+    assert.equal(p.status, 'FAILED');
+    assert.equal(p.upi_handle_masked, 'al***@okhdfc');
+    assert.equal(p.card_last4, null);
+
+    assert.equal((await hook('payment.captured', c, { payId: 'pay_i2', status: 'captured', extra: card })).status, 200);
+    p = await one('SELECT * FROM payments WHERE id=$1', [c.pay.paymentId]);
+    assert.equal(p.status, 'CAPTURED');
+    assert.deepEqual(
+      [p.method, p.card_network, p.card_last4, p.card_type, p.card_issuer, p.upi_handle_masked],
+      ['card', 'VISA', '4242', 'CREDIT', 'HDFC', null], // UPI data replaced, not left stale
+    );
+    // replay of the same payment without the card object must not erase what is stored
+    await hook('order.paid', c, { payId: 'pay_i2', status: 'captured', extra: { method: 'card' } });
+    p = await one('SELECT * FROM payments WHERE id=$1', [c.pay.paymentId]);
+    assert.deepEqual([p.card_network, p.card_last4], ['VISA', '4242']);
+    // no PAN / CVV / full VPA anywhere in what we persisted
+    const dump = JSON.stringify(await db.query(
+      `SELECT p.*, (SELECT json_agg(t.gateway_response) FROM payment_transactions t WHERE t.payment_id=p.id) tx,
+              (SELECT json_agg(e.payload) FROM payment_webhook_events e WHERE e.payment_id=p.id) ev
+         FROM payments p WHERE p.id=$1`, [c.pay.paymentId]));
+    for (const secret of ['4111111111111111', '"cvv"', 'alice@okhdfc']) assert.ok(!dump.includes(secret), `leaked ${secret}`);
+  });
+
+  const INSTR = ['method', 'card_network', 'card_last4', 'card_type', 'card_issuer', 'bank_code', 'wallet_name', 'upi_handle_masked'];
+  const instrumentOf = async (paymentId) => {
+    const p = await one('SELECT * FROM payments WHERE id=$1', [paymentId]);
+    return Object.fromEntries(INSTR.map((k) => [k, p[k]]));
+  };
+
+  await t.test('netbanking and wallet metadata are persisted, each in its own column only', async () => {
+    const nb = await checkout('nb');
+    assert.equal((await hook('payment.captured', nb, { payId: 'pay_nb1', status: 'captured', extra: { method: 'netbanking', bank: 'HDFC' } })).status, 200);
+    assert.deepEqual(await instrumentOf(nb.pay.paymentId), {
+      method: 'netbanking', card_network: null, card_last4: null, card_type: null, card_issuer: null,
+      bank_code: 'HDFC', wallet_name: null, upi_handle_masked: null });
+    const w = await checkout('wallet');
+    assert.equal((await hook('payment.captured', w, { payId: 'pay_w9', status: 'captured', extra: { method: 'wallet', wallet: 'paytm' } })).status, 200);
+    assert.deepEqual(await instrumentOf(w.pay.paymentId), {
+      method: 'wallet', card_network: null, card_last4: null, card_type: null, card_issuer: null,
+      bank_code: null, wallet_name: 'PAYTM', upi_handle_masked: null });
+  });
+
+  await t.test('missing metadata stays null (nothing fabricated) and the payment still settles; historical rows read as null', async () => {
+    // historical record: a payment that has never seen any instrument data
+    const h = await checkout('hist');
+    const before = await one('SELECT * FROM payments WHERE id=$1', [h.pay.paymentId]);
+    assert.equal(before.status, 'CREATED');
+    assert.ok(INSTR.every((k) => before[k] === null));
+    const found = await require('../src/modules/payments/payments.repository').findById(h.pay.paymentId, {});
+    assert.equal(found.card_last4, null);
+    assert.equal(found.upi_handle_masked, null);
+    // card payment whose entity has no card object, and one with unusable values
+    assert.equal((await hook('payment.captured', h, { payId: 'pay_h1', status: 'captured', extra: { method: 'card' } })).status, 200);
+    const after = await one('SELECT * FROM payments WHERE id=$1', [h.pay.paymentId]);
+    assert.equal(after.status, 'CAPTURED');
+    assert.deepEqual(await instrumentOf(h.pay.paymentId), {
+      method: 'card', card_network: null, card_last4: null, card_type: null, card_issuer: null,
+      bank_code: null, wallet_name: null, upi_handle_masked: null });
+    const bad = await checkout('badvals');
+    await hook('payment.captured', bad, { payId: 'pay_b1', status: 'captured', extra: { method: 'card', card: { last4: '12', type: 'gift' } } });
+    const row = await instrumentOf(bad.pay.paymentId);
+    assert.equal(row.card_last4, null);
+    assert.equal(row.card_type, null);
+  });
+
+  await t.test('duplicate delivery keeps metadata stable; payload and logs never contain secrets', async () => {
+    const lines = [];
+    const grab = (orig) => (...a) => { lines.push(a.map(String).join(' ')); return orig(...a); };
+    t.mock.method(console, 'log', grab(console.log.bind(console)));
+    t.mock.method(console, 'error', grab(console.error.bind(console)));
+    const c = await checkout('dupmeta');
+    const extra = { method: 'upi', vpa: 'bob@okicici', card: { number: '4111111111111111', cvv: 'CVV-IN-CARD' },
+      cvv: 'CVV-7731', pin: 'PIN-5519', otp: 'OTP-902144', number: '5555555555554444', authentication: { otp: 'OTP-AUTH-4417' } };
+    const eventId = `evt_${suffix}_dupmeta`;
+    const first = await hook('payment.captured', c, { payId: 'pay_dm1', status: 'captured', eventId, extra });
+    const second = await hook('payment.captured', c, { payId: 'pay_dm1', status: 'captured', eventId, extra });
+    assert.equal(first.status, 200);
+    assert.equal(second.json.data.status, 'DUPLICATE');
+    assert.equal((await instrumentOf(c.pay.paymentId)).upi_handle_masked, 'bo***@okicici');
+    assert.equal(Number((await one('SELECT COUNT(*) n FROM payment_webhook_events WHERE gateway_event_id=$1', [eventId])).n), 1);
+    const stored = JSON.stringify((await one('SELECT payload FROM payment_webhook_events WHERE gateway_event_id=$1', [eventId])).payload);
+    const everything = stored + lines.join('\n');
+    for (const secret of ['bob@okicici', '4111111111111111', '5555555555554444', 'CVV-IN-CARD', 'CVV-7731', 'PIN-5519', 'OTP-902144', 'OTP-AUTH-4417']) {
+      assert.ok(!everything.includes(secret), `leaked ${secret}`);
+    }
   });
 });
