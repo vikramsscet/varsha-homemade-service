@@ -39,11 +39,16 @@ app.use(
         "X-Request-Id",
         "X-Anonymous-Cart-ID",
         "X-Guest-Checkout-Session",
+        "X-Guest-Order-Token",
+        "Idempotency-Key",
       ],
       exposedHeaders: ["X-Request-Id", "X-Anonymous-Cart-ID"],
     });
   })
 );
+// Razorpay webhooks: the signature covers the exact bytes sent, so this route must see the RAW body
+// (registered before express.json, which then skips it because the body is already read).
+app.use('/api/v1/payments/webhook', express.raw({ type: () => true, limit: '256kb' }));
 app.use(express.json({ limit: '10kb' }));
 
 app.use('/health', healthRoutes);

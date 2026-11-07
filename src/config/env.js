@@ -18,6 +18,23 @@ if (!process.env.PRODUCT_SERVICE_PROVIDER && nodeEnv !== 'test') {
   throw new Error("PRODUCT_SERVICE_PROVIDER must be set explicitly ('http' or 'mock')");
 }
 
+const num = (name, fallback) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) throw new Error(`${name} must be a non-negative number`);
+  return n;
+};
+
+// Razorpay credentials come only from the environment. Required in production; elsewhere the
+// payment endpoints answer 503 PAYMENT_GATEWAY_NOT_CONFIGURED until they are set.
+if (
+  nodeEnv === 'production' &&
+  (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET || !process.env.RAZORPAY_WEBHOOK_SECRET)
+) {
+  throw new Error('RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are required in production');
+}
+
 module.exports = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === 'production',
@@ -60,6 +77,22 @@ module.exports = Object.freeze({
     provider: process.env.PRODUCT_SERVICE_PROVIDER || 'mock',
     baseUrl: (process.env.PRODUCT_SERVICE_URL || '').replace(/\/+$/, ''),
     timeoutMs: parseInt(process.env.PRODUCT_SERVICE_TIMEOUT_MS, 10) || 8000,
+  },
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID || '',
+    keySecret: process.env.RAZORPAY_KEY_SECRET || '',
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+    baseUrl: (process.env.RAZORPAY_API_BASE_URL || 'https://api.razorpay.com').replace(/\/+$/, ''),
+    timeoutMs: parseInt(process.env.RAZORPAY_TIMEOUT_MS, 10) || 10000,
+  },
+  checkout: {
+    // Percentage added on top of (subtotal - discount); 0 = prices already include tax / none applies.
+    taxRatePercent: num('CHECKOUT_TAX_RATE_PERCENT', 0),
+    shippingFlatFee: num('CHECKOUT_SHIPPING_FLAT_FEE', 0),
+    // Shipping is free once (subtotal - discount) reaches this amount; 0 disables the waiver.
+    freeShippingThreshold: num('CHECKOUT_FREE_SHIPPING_THRESHOLD', 0),
+    paymentWindowMinutes: parseInt(process.env.ORDER_PAYMENT_WINDOW_MINUTES, 10) || 24 * 60,
+    rateLimitMax: parseInt(process.env.CHECKOUT_RATE_LIMIT_MAX, 10) || 60,
   },
   enableDocs: process.env.NODE_ENV !== 'production' || process.env.ENABLE_DOCS === 'true',
 });
