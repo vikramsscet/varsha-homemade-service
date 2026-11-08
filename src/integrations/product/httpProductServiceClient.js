@@ -60,6 +60,34 @@ class HttpProductServiceClient {
       unitPrice: String(value.price),
     };
   }
+
+  // Package data for shipping. ASSUMED CMS contract: the product payload carries numeric weightGrams,
+  // lengthCm, breadthCm and heightCm. Absent/invalid fields come back as null so the caller can fail
+  // explicitly instead of sending guessed values. Returns null if the product does not exist.
+  async getPackageInfo(productId) {
+    let res;
+    try {
+      res = await fetch(`${this.baseUrl}/api/v1/products/${encodeURIComponent(productId)}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      throw new AppError(502, 'PRODUCT_SERVICE_UNAVAILABLE', 'Product service unavailable');
+    }
+    if (res.status === 404 || res.status === 400) return null;
+    if (!res.ok) throw new AppError(502, 'PRODUCT_SERVICE_UNAVAILABLE', 'Product service unavailable');
+    const body = await res.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      throw new AppError(502, 'PRODUCT_SERVICE_INVALID_RESPONSE', 'Product service returned an invalid response');
+    }
+    const num = (v) => (v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+    return {
+      weightGrams: num(body.weightGrams),
+      lengthCm: num(body.lengthCm),
+      breadthCm: num(body.breadthCm),
+      heightCm: num(body.heightCm),
+    };
+  }
 }
 
 module.exports = { HttpProductServiceClient };

@@ -5,6 +5,40 @@ const errorResponse = (description) => ({
   content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
 });
 
+const shippingBody = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['deliveryPincode', 'paymentMethod'],
+        properties: {
+          deliveryPincode: { type: 'string', pattern: '^\\d{6}$', example: '411057' },
+          paymentMethod: { type: 'string', enum: ['PREPAID', 'COD'], example: 'PREPAID' },
+        },
+      },
+    },
+  },
+};
+const shippingErrors = {
+  400: errorResponse('INVALID_REQUEST / INVALID_ANONYMOUS_CART_ID'),
+  401: errorResponse('UNAUTHORIZED'),
+  404: errorResponse('CART_NOT_FOUND'),
+  422: errorResponse('CART_EMPTY / PRODUCT_PACKAGE_INFO_MISSING (product lacks weight or dimensions)'),
+  429: errorResponse('RATE_LIMITED'),
+  502: errorResponse('SHIPPING_PROVIDER_AUTH_FAILED / _ERROR / _INVALID_RESPONSE / _UNAVAILABLE'),
+  503: errorResponse('SHIPPING_NOT_CONFIGURED'),
+  504: errorResponse('SHIPPING_PROVIDER_TIMEOUT'),
+};
+const shippingOk = (description, data) => ({
+  description,
+  content: {
+    'application/json': {
+      schema: { type: 'object', properties: { success: { type: 'boolean', example: true }, data } },
+    },
+  },
+});
+
 const cartOk = (description) => ({
   description,
   content: { 'application/json': { schema: { $ref: '#/components/schemas/CartResponse' } } },
@@ -61,7 +95,7 @@ module.exports = {
     description: 'User, authentication and cart API for varsha-homemade.com',
   },
   servers: [{ url: 'http://localhost:3001' }],
-  tags: [{ name: 'Auth' }, { name: 'Addresses' }, { name: 'Guest Checkout' }, { name: 'Cart' }, { name: 'Cart Items' }, { name: 'Orders' }, { name: 'Payments' }, { name: 'Health' }],
+  tags: [{ name: 'Auth' }, { name: 'Addresses' }, { name: 'Guest Checkout' }, { name: 'Cart' }, { name: 'Cart Items' }, { name: 'Orders' }, { name: 'Payments' }, { name: 'Shipping' }, { name: 'Health' }],
   paths: {
     '/api/v1/auth/google': {
       post: {
@@ -227,6 +261,65 @@ module.exports = {
         summary: 'Delete the session (the cart is not deleted)',
         security: guestAuth,
         responses: { 200: { description: 'Deleted' }, 401: guestErrors[401] },
+      },
+    },
+    '/api/v1/shipping/serviceability': {
+      post: {
+        tags: ['Shipping'],
+        summary: 'Check whether the current cart can be delivered to a PIN code',
+        description:
+          'Weight and dimensions are derived server-side from the cart; anything sent for them is ignored. Read-only: no Shiprocket order/shipment is created.',
+        security: cartAuth,
+        parameters: [{ $ref: '#/components/parameters/AnonymousCartId' }],
+        requestBody: shippingBody,
+        responses: {
+          200: shippingOk('Serviceability result', {
+            type: 'object',
+            properties: {
+              serviceable: { type: 'boolean' },
+              deliveryPincode: { type: 'string', example: '411057' },
+              pickupPincode: { type: 'string', description: 'Only when serviceable', example: '411057' },
+              message: { type: 'string', example: 'Delivery is available at your location' },
+            },
+          }),
+          ...shippingErrors,
+        },
+      },
+    },
+    '/api/v1/shipping/rates': {
+      post: {
+        tags: ['Shipping'],
+        summary: 'Shipping options (cheapest first) for the current cart',
+        description:
+          "shippingCharge is Shiprocket's own rate (no markup). estimatedDeliveryDays/Date are null when Shiprocket does not provide them. Read-only: no order, AWB or pickup.",
+        security: cartAuth,
+        parameters: [{ $ref: '#/components/parameters/AnonymousCartId' }],
+        requestBody: shippingBody,
+        responses: {
+          200: shippingOk('Shipping rates', {
+            type: 'object',
+            properties: {
+              deliveryPincode: { type: 'string', example: '411057' },
+              serviceable: { type: 'boolean' },
+              currency: { type: 'string', example: 'INR' },
+              shippingOptions: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    provider: { type: 'string', example: 'SHIPROCKET' },
+                    courierId: { type: 'integer', example: 10 },
+                    courierName: { type: 'string', example: 'Delhivery' },
+                    shippingCharge: { type: 'number', example: 65 },
+                    estimatedDeliveryDays: { type: 'integer', nullable: true, example: 4 },
+                    estimatedDeliveryDate: { type: 'string', format: 'date', nullable: true, example: '2026-11-12' },
+                  },
+                },
+              },
+            },
+          }),
+          ...shippingErrors,
+        },
       },
     },
     '/api/v1/carts': {

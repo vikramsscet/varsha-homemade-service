@@ -92,6 +92,17 @@ module.exports = Object.freeze({
     baseUrl: (process.env.RAZORPAY_API_BASE_URL || 'https://api.razorpay.com').replace(/\/+$/, ''),
     timeoutMs: parseInt(process.env.RAZORPAY_TIMEOUT_MS, 10) || 10000,
   },
+  shiprocket: {
+    baseUrl: (process.env.SHIPROCKET_BASE_URL || 'https://apiv2.shiprocket.in/v1/external').replace(/\/+$/, ''),
+    email: process.env.SHIPROCKET_EMAIL || '',
+    password: process.env.SHIPROCKET_PASSWORD || '',
+    pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE || '',
+    timeoutMs: parseInt(process.env.SHIPROCKET_TIMEOUT_MS, 10) || 8000,
+  },
+  shipping: {
+    // Box/filler weight added to every package (grams).
+    packagingWeightGrams: num('SHIPPING_PACKAGING_WEIGHT_GRAMS', 100),
+  },
   checkout: {
     // Percentage added on top of (subtotal - discount); 0 = prices already include tax / none applies.
     taxRatePercent: num('CHECKOUT_TAX_RATE_PERCENT', 0),

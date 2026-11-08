@@ -152,3 +152,12 @@ When `INTERNAL_API_KEY` is unset the endpoints answer 503 `INTERNAL_API_DISABLED
 | GET | `/internal/v1/users/:userId/orders` | registered user's orders only; `limit`, `cursor`, `status`, `paymentStatus` |
 
 Keyset pagination on `(created_at DESC, id DESC)`; cursors are opaque and valid only for the filters that issued them.
+
+## Shipping serviceability
+
+`POST /api/v1/shipping/serviceability` with `{ "deliveryPincode": "411057", "paymentMethod": "PREPAID" | "COD" }`
+(caller identified like the cart: Bearer JWT or `X-Anonymous-Cart-ID`). Package weight/dimensions are derived
+server-side from the caller's cart (product `weightGrams`, `lengthCm`, `breadthCm`, `heightCm` + packaging weight);
+products missing that data yield `422 PRODUCT_PACKAGE_INFO_MISSING`. Read-only: no Shiprocket order/shipment is created.
+Config: `SHIPROCKET_BASE_URL`, `SHIPROCKET_EMAIL`, `SHIPROCKET_PASSWORD`, `SHIPROCKET_PICKUP_PINCODE`,
+`SHIPROCKET_TIMEOUT_MS`, `SHIPPING_PACKAGING_WEIGHT_GRAMS`.
