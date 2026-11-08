@@ -14,6 +14,12 @@ if (process.env.JWT_SECRET.length < 32) {
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 
+// Shared secret for server-to-server calls from the Admin CMS to /internal/v1 (read-only order APIs).
+// Unset = the internal API is disabled (503). Never expose it to a browser.
+if (process.env.INTERNAL_API_KEY && process.env.INTERNAL_API_KEY.length < 32) {
+  throw new Error('INTERNAL_API_KEY must be at least 32 characters long');
+}
+
 if (!process.env.PRODUCT_SERVICE_PROVIDER && nodeEnv !== 'test') {
   throw new Error("PRODUCT_SERVICE_PROVIDER must be set explicitly ('http' or 'mock')");
 }
@@ -51,6 +57,7 @@ module.exports = Object.freeze({
     clientId: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   },
+  internalApiKey: process.env.INTERNAL_API_KEY || '',
   corsOrigins: (process.env.CORS_ORIGINS || '')
     .split(',')
     .map((o) => o.trim())

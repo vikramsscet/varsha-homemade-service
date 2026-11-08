@@ -56,6 +56,8 @@ if (env.enableDocs) {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapi));
 }
 app.use('/api/v1', apiRoutes);
+// Server-to-server only (Admin CMS); authenticated with INTERNAL_API_KEY, not user JWTs.
+app.use('/internal/v1', require('./modules/internalOrders').internalOrderRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

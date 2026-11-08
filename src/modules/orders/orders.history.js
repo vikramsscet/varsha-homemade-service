@@ -162,4 +162,4 @@ const getOrder = async (userId, orderId) => {
   };
 };
 
-module.exports = { listOrders, getOrder, paymentMethodSummary, encodeCursor, decodeCursor, networkLabel };
+module.exports = { listOrders, getOrder, paymentMethodSummary, encodeCursor, decodeCursor, networkLabel, methodDetails };

@@ -138,3 +138,17 @@ curl -X POST $BASE/carts/$CART/merge -H "Authorization: Bearer $JWT" -H "X-Anony
 
 ### Ready for Checkout
 Checkout should: load the cart with `cartService.getCart`, **re-fetch prices from the Product CMS** (cart prices are snapshots), run in one transaction (`db.withTransaction`), and finish with `cartService.markCompleted(cartId, client)`. Mount it at `/api/v1/checkout` in `src/routes/index.js`.
+
+## Internal read-only order API (Admin CMS)
+
+Server-to-server endpoints used by `varsha-homemade-cms`; not for browsers and not in the public OpenAPI docs.
+Authenticated with the `X-Internal-Api-Key` header, which must equal `INTERNAL_API_KEY` (min 32 chars).
+When `INTERNAL_API_KEY` is unset the endpoints answer 503 `INTERNAL_API_DISABLED`. The CMS must be configured with the same value as `ORDER_SERVICE_API_KEY`.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/internal/v1/orders` | all customers (registered + guest); `limit`, `cursor`, `status`, `paymentStatus`, `search`, `createdFrom`, `createdBefore` |
+| GET | `/internal/v1/orders/:orderId` | full order with item/address snapshots and every payment attempt |
+| GET | `/internal/v1/users/:userId/orders` | registered user's orders only; `limit`, `cursor`, `status`, `paymentStatus` |
+
+Keyset pagination on `(created_at DESC, id DESC)`; cursors are opaque and valid only for the filters that issued them.
